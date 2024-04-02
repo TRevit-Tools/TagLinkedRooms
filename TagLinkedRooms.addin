@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Command">
+    <Text>Command TagLinkedRooms</Text>
+    <Description>Some description for TagLinkedRooms</Description>
+    <Assembly>TagLinkedRooms.dll</Assembly>
+    <FullClassName>TagLinkedRooms.Command</FullClassName>
+    <ClientId>{E6CB8DE3-0F11-4370-9F04-A5E3284D961D}</ClientId>
+    <VendorId>com.typepad.thebuildingcoder</VendorId>
+    <VendorDescription>The Building Coder, http://thebuildingcoder.typepad.com</VendorDescription>
+  </AddIn>
+  <AddIn Type="Application">
+    <Name>Application TagLinkedRooms</Name>
+    <Assembly>TagLinkedRooms.dll</Assembly>
+    <FullClassName>TagLinkedRooms.App</FullClassName>
+    <ClientId>{7B07906C-DFE4-4DDB-8DAA-8C3EA0D7902C}</ClientId>
+    <VendorId>com.typepad.thebuildingcoder</VendorId>
+    <VendorDescription>The Building Coder, http://thebuildingcoder.typepad.com</VendorDescription>
+  </AddIn>
+</RevitAddIns>
