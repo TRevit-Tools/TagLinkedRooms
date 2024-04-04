@@ -5,6 +5,7 @@ using Autodesk.Revit.UI.Selection;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 
 namespace TagLinkedRooms
 {
@@ -20,13 +21,32 @@ namespace TagLinkedRooms
             // Access current selection
             Selection sel = uidoc.Selection;
 
-            // Retrieve rooms from the document
-            FilteredElementCollector col = new FilteredElementCollector(doc)
+            //Get revit linked document
+            var revitLinks = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_RvtLinks)
+                .OfClass(typeof(RevitLinkInstance)).ToList();
+            //Get revit arch model links
+            var archLinks = revitLinks;//.Where(a => a.Document.Title.ToUpper().Contains("ARCH")).ToList();
+            //Get first link available
+            var firstArchLink = archLinks.FirstOrDefault();
+            //Get document of first link available
+            var firstArchDoc = firstArchLink.Document;
+
+            // Retrieve rooms from the linked arch document
+            FilteredElementCollector linkedArchRooms = new FilteredElementCollector(firstArchDoc)
                 .OfCategory(BuiltInCategory.OST_Rooms)
                 .WhereElementIsNotElementType();
 
+            // Retrieve rooms from the document
+            FilteredElementCollector currentModelRooms = new FilteredElementCollector(doc)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType();
+            //message
+            var roomCenters = string.Empty;
+            Transaction transaction = new Transaction(doc, "Tran");
+            transaction.Start();
             // Iterate over the rooms
-            foreach (Element e in col)
+            foreach (Element e in currentModelRooms)
             {
                 Room room = e as Room;
                 if (room != null)
@@ -34,8 +54,9 @@ namespace TagLinkedRooms
                     try
                     {
                         // Get the centroid of the room
-                        XYZ roomCentroid = GetRoomCentroid(room);
-                        Debug.Print("Room Centroid: " + roomCentroid.ToString());
+                        var roomLocation = (room.Location as LocationPoint).Point;
+                        doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(roomLocation.X, roomLocation.Y), doc.ActiveView.Id);
+                        roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
                     }
                     catch (Exception ex)
                     {
@@ -43,7 +64,27 @@ namespace TagLinkedRooms
                     }
                 }
             }
-
+            // Iterate over the linked rooms
+            foreach (Element e in linkedArchRooms)
+            {
+                Room room = e as Room;
+                if (room != null)
+                {
+                    try
+                    {
+                        // Get the centroid of the room
+                        var roomLocation = (room.Location as LocationPoint).Point;
+                        doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(roomLocation.X, roomLocation.Y), doc.ActiveView.Id);
+                        roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.Print("An error occurred: " + ex.Message);
+                    }
+                }
+            }
+            transaction.Commit();
+            TaskDialog.Show("Room Centroids", roomCenters);
             return Result.Succeeded;
         }
 
