@@ -21,16 +21,15 @@ namespace TagLinkedRooms
             // Access current selection
             Selection sel = uidoc.Selection;
 
-            //Get revit linked document
+            //Get revit link instances
             var revitLinks = new FilteredElementCollector(doc)
-                .OfCategory(BuiltInCategory.OST_RvtLinks)
                 .OfClass(typeof(RevitLinkInstance)).ToList();
-            //Get revit arch model links
-            var archLinks = revitLinks;//.Where(a => a.Document.Title.ToUpper().Contains("ARCH")).ToList();
+            //Get revit link instances that have ARCH in the name
+            var archLinks = revitLinks.Where(a => a.Name.ToUpper().Contains("ARCH")).ToList();
             //Get first link available
-            var firstArchLink = archLinks.FirstOrDefault();
-            //Get document of first link available
-            var firstArchDoc = firstArchLink.Document;
+            var firstArchLink = archLinks.FirstOrDefault() as RevitLinkInstance;
+            //Get the linkdocument from the revit link instance
+            var firstArchDoc = firstArchLink.GetLinkDocument();
 
             // Retrieve rooms from the linked arch document
             FilteredElementCollector linkedArchRooms = new FilteredElementCollector(firstArchDoc)
@@ -38,13 +37,16 @@ namespace TagLinkedRooms
                 .WhereElementIsNotElementType();
 
             // Retrieve rooms from the document
-            FilteredElementCollector currentModelRooms = new FilteredElementCollector(doc)
+            FilteredElementCollector currentModelRooms = new FilteredElementCollector(doc,doc.ActiveView.Id)
                 .OfCategory(BuiltInCategory.OST_Rooms)
                 .WhereElementIsNotElementType();
+
             //message
             var roomCenters = string.Empty;
-            Transaction transaction = new Transaction(doc, "Tran");
+            //start transaction for placing room tags
+            Transaction transaction = new Transaction(doc, "Place Room Tags");
             transaction.Start();
+            
             // Iterate over the rooms
             foreach (Element e in currentModelRooms)
             {
@@ -53,10 +55,11 @@ namespace TagLinkedRooms
                 {
                     try
                     {
-                        // Get the centroid of the room
+                        // Get the room location point (center of room)
                         var roomLocation = (room.Location as LocationPoint).Point;
+                        //Places new room tag in center of room
                         doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(roomLocation.X, roomLocation.Y), doc.ActiveView.Id);
-                        roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
+                        //roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
                     }
                     catch (Exception ex)
                     {
@@ -64,6 +67,7 @@ namespace TagLinkedRooms
                     }
                 }
             }
+            
             // Iterate over the linked rooms
             foreach (Element e in linkedArchRooms)
             {
@@ -72,10 +76,15 @@ namespace TagLinkedRooms
                 {
                     try
                     {
-                        // Get the centroid of the room
+                        LinkElementId linkedRoom = new LinkElementId(firstArchLink.Id,room.Id);
+
+                        // Get the room location point
                         var roomLocation = (room.Location as LocationPoint).Point;
-                        doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(roomLocation.X, roomLocation.Y), doc.ActiveView.Id);
-                        roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
+                        // Adjust the room location to the link revit instance origin if the model has moved in the current model
+                        var modifiedRoomLocation = firstArchLink.GetTransform().Origin + roomLocation;
+                        // Place new room tag
+                        doc.Create.NewRoomTag(linkedRoom, new UV(modifiedRoomLocation.X, modifiedRoomLocation.Y), doc.ActiveView.Id);
+                        //roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
                     }
                     catch (Exception ex)
                     {
@@ -83,8 +92,9 @@ namespace TagLinkedRooms
                     }
                 }
             }
+            //commit transaction for placing room tags
             transaction.Commit();
-            TaskDialog.Show("Room Centroids", roomCenters);
+            //TaskDialog.Show("Room Centroids", roomCenters);
             return Result.Succeeded;
         }
 
