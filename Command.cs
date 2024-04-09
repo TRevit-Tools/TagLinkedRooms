@@ -17,110 +17,96 @@ namespace TagLinkedRooms
             UIDocument uidoc = uiapp.ActiveUIDocument;
             Document doc = uidoc.Document;
 
-            // Get all linked instances in the document
-            FilteredElementCollector linkCollector = new FilteredElementCollector(doc)
-                .OfClass(typeof(RevitLinkInstance));
+            // Get active view
+            View activeView = uidoc.ActiveView;
 
-            foreach (Element element in linkCollector)
+            // Filter rooms in the active view
+            FilteredElementCollector roomCollector = new FilteredElementCollector(doc, activeView.Id)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType();
+
+            foreach (Element elem in roomCollector)
             {
-                if (element is RevitLinkInstance linkInstance)
+                if (elem is Room room)
                 {
-                    Document linkedDoc = linkInstance.GetLinkDocument();
-
-                    if (linkedDoc == null)
-                        continue;
-
-                    // Filter rooms in the linked document
-                    FilteredElementCollector roomCollector = new FilteredElementCollector(linkedDoc)
-                        .OfCategory(BuiltInCategory.OST_Rooms)
-                        .WhereElementIsNotElementType();
-
-                    // Get all floor plans and reflected ceiling plans
-                    List<ViewPlan> floorPlans = GetFloorPlans(doc);
-                    List<ViewPlan> ceilingPlans = GetCeilingPlans(doc);
-
-                    foreach (ViewPlan floorPlan in floorPlans)
+                    try
                     {
-                        foreach (Element elem in roomCollector)
+                        // Get the room centroid
+                        XYZ roomCentroid = GetRoomCentroid(room);
+                        Debug.Print("Room Centroid: " + roomCentroid.ToString());
+
+                        // Tag the room in the active view
+                        using (Transaction transaction = new Transaction(doc))
                         {
-                            if (elem is Room room)
-                            {
-                                try
-                                {
-                                    // Get the room centroid
-                                    XYZ roomCentroid = GetRoomCentroid(room);
-                                    Debug.Print("Room Centroid: " + roomCentroid.ToString());
-
-                                    // Convert XYZ to UV
-                                    UV roomCentroidUV = new UV(roomCentroid.X, roomCentroid.Y);
-
-                                    // Tag the room in the floor plan view
-                                    using (Transaction transaction = new Transaction(doc))
-                                    {
-                                        transaction.Start("Tag Room");
-                                        doc.Create.NewRoomTag(new LinkElementId(linkInstance.Id), roomCentroidUV, floorPlan.Id);
-                                        transaction.Commit();
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.Print("An error occurred: " + ex.Message);
-                                }
-                            }
+                            transaction.Start("Tag Room");
+                            doc.Create.NewRoomTag(activeView, roomCentroid, false);
+                            transaction.Commit();
                         }
                     }
-
-                    foreach (ViewPlan ceilingPlan in ceilingPlans)
+                    catch (Exception ex)
                     {
-                        foreach (Element elem in roomCollector)
-                        {
-                            if (elem is Room room)
-                            {
-                                try
-                                {
-                                    // Get the room centroid
-                                    XYZ roomCentroid = GetRoomCentroid(room);
-                                    Debug.Print("Room Centroid: " + roomCentroid.ToString());
-
-                                    // Convert XYZ to UV
-                                    UV roomCentroidUV = new UV(roomCentroid.X, roomCentroid.Y);
-
-                                    // Tag the room in the ceiling plan view
-                                    using (Transaction transaction = new Transaction(doc))
-                                    {
-                                        transaction.Start("Tag Room");
-                                        doc.Create.NewRoomTag(new LinkElementId(linkInstance.Id), roomCentroidUV, ceilingPlan.Id);
-                                        transaction.Commit();
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.Print("An error occurred: " + ex.Message);
-                                }
-                            }
-                        }
+                        Debug.Print("An error occurred: " + ex.Message);
                     }
                 }
+            }
+
+            // Get level of active view
+            Level activeLevel = activeView.GenLevel;
+
+            // Get all floor plans and reflected ceiling plans with the same level as the active view
+            List<ViewPlan> floorPlans = GetFloorPlans(doc, activeLevel.Id);
+            List<ViewPlan> ceilingPlans = GetCeilingPlans(doc, activeLevel.Id);
+
+            foreach (ViewPlan floorPlan in floorPlans)
+            {
+                CopyRoomTags(activeView, floorPlan, doc);
+            }
+
+            foreach (ViewPlan ceilingPlan in ceilingPlans)
+            {
+                CopyRoomTags(activeView, ceilingPlan, doc);
             }
 
             return Result.Succeeded;
         }
 
-        private List<ViewPlan> GetFloorPlans(Document doc)
+        private void CopyRoomTags(View sourceView, View targetView, Document doc)
+        {
+            // Filter room tags in the source view
+            FilteredElementCollector tagCollector = new FilteredElementCollector(doc, sourceView.Id)
+                .OfCategory(BuiltInCategory.OST_RoomTags)
+                .WhereElementIsNotElementType();
+
+            using (Transaction transaction = new Transaction(doc))
+            {
+                transaction.Start("Copy Room Tags");
+                foreach (Element elem in tagCollector)
+                {
+                    if (elem is RoomTag roomTag)
+                    {
+                        // Copy room tags to the target view
+                        doc.Create.NewRoomTag(targetView, roomTag.TagHeadPosition, false);
+                    }
+                }
+                transaction.Commit();
+            }
+        }
+
+        private List<ViewPlan> GetFloorPlans(Document doc, ElementId levelId)
         {
             return new FilteredElementCollector(doc)
                 .OfClass(typeof(ViewPlan))
                 .Cast<ViewPlan>()
-                .Where(v => v.ViewType == ViewType.FloorPlan)
+                .Where(v => v.ViewType == ViewType.FloorPlan && v.GenLevel.Id == levelId)
                 .ToList();
         }
 
-        private List<ViewPlan> GetCeilingPlans(Document doc)
+        private List<ViewPlan> GetCeilingPlans(Document doc, ElementId levelId)
         {
             return new FilteredElementCollector(doc)
                 .OfClass(typeof(ViewPlan))
                 .Cast<ViewPlan>()
-                .Where(v => v.ViewType == ViewType.CeilingPlan)
+                .Where(v => v.ViewType == ViewType.CeilingPlan && v.GenLevel.Id == levelId)
                 .ToList();
         }
 
@@ -130,8 +116,7 @@ namespace TagLinkedRooms
 
             if (roomLocation != null)
             {
-                XYZ roomPoint = roomLocation.Point;
-                return roomPoint;
+                return roomLocation.Point;
             }
             else
             {
