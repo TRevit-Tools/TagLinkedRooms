@@ -3,7 +3,6 @@ using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.UI;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 
 namespace TagLinkedRooms
@@ -17,111 +16,68 @@ namespace TagLinkedRooms
             UIDocument uidoc = uiapp.ActiveUIDocument;
             Document doc = uidoc.Document;
 
-            // Get active view
-            View activeView = uidoc.ActiveView;
+            // Get all linked models
+            var revitLinks = new FilteredElementCollector(doc)
+                .OfClass(typeof(RevitLinkInstance))
+                .Cast<RevitLinkInstance>()
+                .ToList();
 
-            // Filter rooms in the active view
-            FilteredElementCollector roomCollector = new FilteredElementCollector(doc, activeView.Id)
-                .OfCategory(BuiltInCategory.OST_Rooms)
-                .WhereElementIsNotElementType();
-
-            foreach (Element elem in roomCollector)
+            // Get the first linked model
+            var firstLink = revitLinks.FirstOrDefault();
+            if (firstLink == null)
             {
-                if (elem is Room room)
-                {
-                    try
-                    {
-                        // Get the room centroid
-                        XYZ roomCentroid = GetRoomCentroid(room);
-                        Debug.Print("Room Centroid: " + roomCentroid.ToString());
+                TaskDialog.Show("Error", "No linked room instance found.");
+                return Result.Failed;
+            }
 
-                        // Tag the room in the active view
-                        using (Transaction transaction = new Transaction(doc))
+            // Get the link document from the linked model
+            var linkDoc = firstLink.GetLinkDocument();
+            if (linkDoc == null)
+            {
+                TaskDialog.Show("Error", "Failed to retrieve link document.");
+                return Result.Failed;
+            }
+
+            // Retrieve rooms from the linked model document
+            var linkedRooms = new FilteredElementCollector(linkDoc)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType()
+                .ToList();
+
+            // Start transaction for placing room tags
+            using (Transaction transaction = new Transaction(doc, "Place Room Tags"))
+            {
+                transaction.Start();
+
+                // Iterate over the linked rooms
+                foreach (Element e in linkedRooms)
+                {
+                    Room room = e as Room;
+                    if (room != null)
+                    {
+                        // Get the room location point
+                        var roomLocation = (room.Location as LocationPoint)?.Point;
+                        if (roomLocation != null)
                         {
-                            transaction.Start("Tag Room");
-                            doc.Create.NewRoomTag(activeView, roomCentroid, false);
-                            transaction.Commit();
+                            // Convert XYZ to UV
+                            UV tagLocation = new UV(roomLocation.X, roomLocation.Y);
+
+                            // Convert room Id to LinkElementId
+                            LinkElementId roomId = new LinkElementId(room.Id);
+
+                            // Place new room tag
+                            doc.Create.NewRoomTag(roomId, tagLocation, uidoc.ActiveView.Id);
+                            
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Debug.Print("An error occurred: " + ex.Message);
-                    }
                 }
-            }
 
-            // Get level of active view
-            Level activeLevel = activeView.GenLevel;
-
-            // Get all floor plans and reflected ceiling plans with the same level as the active view
-            List<ViewPlan> floorPlans = GetFloorPlans(doc, activeLevel.Id);
-            List<ViewPlan> ceilingPlans = GetCeilingPlans(doc, activeLevel.Id);
-
-            foreach (ViewPlan floorPlan in floorPlans)
-            {
-                CopyRoomTags(activeView, floorPlan, doc);
-            }
-
-            foreach (ViewPlan ceilingPlan in ceilingPlans)
-            {
-                CopyRoomTags(activeView, ceilingPlan, doc);
+                // Commit transaction for placing room tags
+                transaction.Commit();
+                TaskDialog.Show("Success", "Transaction committed.");
             }
 
             return Result.Succeeded;
-        }
-
-        private void CopyRoomTags(View sourceView, View targetView, Document doc)
-        {
-            // Filter room tags in the source view
-            FilteredElementCollector tagCollector = new FilteredElementCollector(doc, sourceView.Id)
-                .OfCategory(BuiltInCategory.OST_RoomTags)
-                .WhereElementIsNotElementType();
-
-            using (Transaction transaction = new Transaction(doc))
-            {
-                transaction.Start("Copy Room Tags");
-                foreach (Element elem in tagCollector)
-                {
-                    if (elem is RoomTag roomTag)
-                    {
-                        // Copy room tags to the target view
-                        doc.Create.NewRoomTag(targetView, roomTag.TagHeadPosition, false);
-                    }
-                }
-                transaction.Commit();
-            }
-        }
-
-        private List<ViewPlan> GetFloorPlans(Document doc, ElementId levelId)
-        {
-            return new FilteredElementCollector(doc)
-                .OfClass(typeof(ViewPlan))
-                .Cast<ViewPlan>()
-                .Where(v => v.ViewType == ViewType.FloorPlan && v.GenLevel.Id == levelId)
-                .ToList();
-        }
-
-        private List<ViewPlan> GetCeilingPlans(Document doc, ElementId levelId)
-        {
-            return new FilteredElementCollector(doc)
-                .OfClass(typeof(ViewPlan))
-                .Cast<ViewPlan>()
-                .Where(v => v.ViewType == ViewType.CeilingPlan && v.GenLevel.Id == levelId)
-                .ToList();
-        }
-
-        private XYZ GetRoomCentroid(Room room)
-        {
-            LocationPoint roomLocation = room.Location as LocationPoint;
-
-            if (roomLocation != null)
-            {
-                return roomLocation.Point;
-            }
-            else
-            {
-                throw new InvalidOperationException("Room location is not a point.");
-            }
         }
     }
 }
