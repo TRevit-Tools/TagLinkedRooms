@@ -4,6 +4,11 @@ using Autodesk.Revit.UI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
+using System.Diagnostics;
+using System.Collections;
+using System.Collections.ObjectModel;
+using Autodesk.Revit;
 
 namespace TagLinkedRooms
 {
@@ -42,6 +47,7 @@ namespace TagLinkedRooms
             var linkedRooms = new FilteredElementCollector(linkDoc)
                 .OfCategory(BuiltInCategory.OST_Rooms)
                 .WhereElementIsNotElementType()
+                .Cast<Room>()
                 .ToList();
 
             // Start transaction for placing room tags
@@ -50,25 +56,19 @@ namespace TagLinkedRooms
                 transaction.Start();
 
                 // Iterate over the linked rooms
-                foreach (Element e in linkedRooms)
+                foreach (Room room in linkedRooms)
                 {
-                    Room room = e as Room;
-                    if (room != null)
+                    // Get the room location point
+                    LocationPoint roomLocation = room.Location as LocationPoint;
+                    if (null != LocationPoint)
                     {
-                        // Get the room location point
-                        var roomLocation = (room.Location as LocationPoint)?.Point;
-                        if (roomLocation != null)
-                        {
-                            // Convert XYZ to UV
-                            UV tagLocation = new UV(roomLocation.X, roomLocation.Y);
+                        // Convert XYZ to UV
+                        double u = roomLocation
+                        UV tagLocation = new UV(roomLocation.X, roomLocation.Y);
 
-                            // Convert room Id to LinkElementId
-                            LinkElementId roomId = new LinkElementId(room.Id);
-
-                            // Place new room tag
-                            doc.Create.NewRoomTag(roomId, tagLocation, uidoc.ActiveView.Id);
-                            
-                        }
+                        // Place new room tag
+                        uiapp.ActiveUIDocument.Document.Create.NewRoomTag(new LinkElementId(room.Id), tagLocation, uiapp.ActiveUIDocument.ActiveView.Id);
+                      
                     }
                 }
 
