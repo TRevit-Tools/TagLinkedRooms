@@ -55,7 +55,7 @@ namespace TagLinkedRooms
 
 
             ElementFilter filterRoom = new ElementClassFilter(typeof(SpatialElement));
-            FilteredElementCollector roomCollector = new FilteredElementCollector(uiapp.ActiveUIDocument.Document);
+            FilteredElementCollector roomCollector = new FilteredElementCollector(linkDoc);
             roomCollector.WherePasses(filterRoom);
 
             foreach (Autodesk.Revit.DB.Element ee in roomCollector)
@@ -74,7 +74,7 @@ namespace TagLinkedRooms
             {
                 transaction.Start();
 
-                foreach (Room tmpRoom in m_roomsWithoutTag)
+                foreach (Room tmpRoom in m_rooms)
                 {
                     //get the location point of the room
                     LocationPoint locPoint = tmpRoom.Location as LocationPoint;
@@ -88,10 +88,10 @@ namespace TagLinkedRooms
 
                         //create room tag
 
-                        uiapp.ActiveUIDocument.Document.Create.NewRoomTag(new LinkElementId(tmpRoom.Id), point, null);
+                        uiapp.ActiveUIDocument.Document.Create.NewRoomTag(new LinkElementId(tmpRoom.Id), point, uiapp.ActiveUIDocument.ActiveView.Id);
                     }
                 }
-            }
+            
 
                 // Commit transaction for placing room tags
                 transaction.Commit();
