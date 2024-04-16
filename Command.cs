@@ -1,6 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Selection;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -17,92 +18,91 @@ namespace TagLinkedRooms
             UIDocument uidoc = uiapp.ActiveUIDocument;
             Document doc = uidoc.Document;
 
-            // Get all linked instances in the document
-            FilteredElementCollector linkCollector = new FilteredElementCollector(doc)
-                .OfClass(typeof(RevitLinkInstance));
+            // Access current selection
+            Selection sel = uidoc.Selection;
 
-            foreach (Element element in linkCollector)
+            //Get revit link instances
+            var revitLinks = new FilteredElementCollector(doc)
+                .OfClass(typeof(RevitLinkInstance)).ToList();
+            //Get revit link instances that have ARCH in the name
+            var archLinks = revitLinks.Where(a => a.Name.ToUpper().Contains("ARCH")).ToList();
+            //Get first link available
+            var firstArchLink = archLinks.FirstOrDefault() as RevitLinkInstance;
+            //Get the linkdocument from the revit link instance
+            var firstArchDoc = firstArchLink.GetLinkDocument();
+
+            // Retrieve rooms from the linked arch document
+            FilteredElementCollector linkedArchRooms = new FilteredElementCollector(firstArchDoc)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType();
+
+            // Retrieve rooms from the document
+            FilteredElementCollector currentModelRooms = new FilteredElementCollector(doc, doc.ActiveView.Id)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType();
+
+            //Retrieve all floor and ceiling plans
+            List<ViewPlan> floorPlans = GetFloorPlans(doc);
+            List<ViewPlan> ceilingPlans = GetCeilingPlans(doc);
+            var allPlans = floorPlans.Concat(ceilingPlans).ToList();
+
+            //message
+            var roomCenters = string.Empty;
+            //start transaction for placing room tags
+            Transaction transaction = new Transaction(doc, "Place Room Tags");
+            transaction.Start();
+
+            // Iterate over the rooms
+            foreach (ViewPlan plans in allPlans)
             {
-                if (element is RevitLinkInstance linkInstance)
+                foreach (Element e in currentModelRooms)
                 {
-                    Document linkedDoc = linkInstance.GetLinkDocument();
-
-                    if (linkedDoc == null)
-                        continue;
-
-                    // Filter rooms in the linked document
-                    FilteredElementCollector roomCollector = new FilteredElementCollector(linkedDoc)
-                        .OfCategory(BuiltInCategory.OST_Rooms)
-                        .WhereElementIsNotElementType();
-
-                    // Get all floor plans and reflected ceiling plans
-                    List<ViewPlan> floorPlans = GetFloorPlans(doc);
-                    List<ViewPlan> ceilingPlans = GetCeilingPlans(doc);
-
-                    foreach (ViewPlan floorPlan in floorPlans)
+                    Room room = e as Room;
+                    if (room != null)
                     {
-                        foreach (Element elem in roomCollector)
+                        try
                         {
-                            if (elem is Room room)
-                            {
-                                try
-                                {
-                                    // Get the room centroid
-                                    XYZ roomCentroid = GetRoomCentroid(room);
-                                    Debug.Print("Room Centroid: " + roomCentroid.ToString());
-
-                                    // Convert XYZ to UV
-                                    UV roomCentroidUV = new UV(roomCentroid.X, roomCentroid.Y);
-
-                                    // Tag the room in the floor plan view
-                                    using (Transaction transaction = new Transaction(doc))
-                                    {
-                                        transaction.Start("Tag Room");
-                                        doc.Create.NewRoomTag(new LinkElementId(linkInstance.Id), roomCentroidUV, floorPlan.Id);
-                                        transaction.Commit();
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.Print("An error occurred: " + ex.Message);
-                                }
-                            }
+                            // Get the room location point (center of room)
+                            var roomLocation = (room.Location as LocationPoint).Point;
+                            //Places new room tag in center of room
+                            doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(roomLocation.X, roomLocation.Y), plans.Id);
+                            //roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.Print("An error occurred: " + ex.Message);
                         }
                     }
+                }
 
-                    foreach (ViewPlan ceilingPlan in ceilingPlans)
+                // Iterate over the linked rooms
+                foreach (Element e in linkedArchRooms)
+                {
+                    Room room = e as Room;
+                    if (room != null)
                     {
-                        foreach (Element elem in roomCollector)
+                        try
                         {
-                            if (elem is Room room)
-                            {
-                                try
-                                {
-                                    // Get the room centroid
-                                    XYZ roomCentroid = GetRoomCentroid(room);
-                                    Debug.Print("Room Centroid: " + roomCentroid.ToString());
+                            LinkElementId linkedRoom = new LinkElementId(firstArchLink.Id, room.Id);
 
-                                    // Convert XYZ to UV
-                                    UV roomCentroidUV = new UV(roomCentroid.X, roomCentroid.Y);
-
-                                    // Tag the room in the ceiling plan view
-                                    using (Transaction transaction = new Transaction(doc))
-                                    {
-                                        transaction.Start("Tag Room");
-                                        doc.Create.NewRoomTag(new LinkElementId(linkInstance.Id), roomCentroidUV, ceilingPlan.Id);
-                                        transaction.Commit();
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.Print("An error occurred: " + ex.Message);
-                                }
-                            }
+                            // Get the room location point
+                            var roomLocation = (room.Location as LocationPoint).Point;
+                            // Adjust the room location to the link revit instance origin if the model has moved in the current model
+                            var modifiedRoomLocation = firstArchLink.GetTransform().Origin + roomLocation;
+                            // Place new room tag
+                            doc.Create.NewRoomTag(linkedRoom, new UV(modifiedRoomLocation.X, modifiedRoomLocation.Y), plans.Id);
+                            //roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.Print("An error occurred: " + ex.Message);
                         }
                     }
                 }
             }
-
+            //commit transaction for placing room tags
+            transaction.Commit();
+            //TaskDialog.Show("Room Centroids", roomCenters);
             return Result.Succeeded;
         }
 
@@ -123,20 +123,66 @@ namespace TagLinkedRooms
                 .Where(v => v.ViewType == ViewType.CeilingPlan)
                 .ToList();
         }
-
         private XYZ GetRoomCentroid(Room room)
         {
-            LocationPoint roomLocation = room.Location as LocationPoint;
+            // Get the room boundary curve
+            CurveLoop roomBoundary = GetRoomBoundary(room);
 
-            if (roomLocation != null)
+            // Calculate the centroid of the room boundary curve
+            XYZ centroid = XYZ.Zero;
+            int count = 0;
+
+            // Iterate over the segments of the boundary curve
+            foreach (var segment in roomBoundary)
             {
-                XYZ roomPoint = roomLocation.Point;
-                return roomPoint;
+                // Accumulate the coordinates of the vertices
+                centroid += segment.GetEndPoint(0);
+                count++;
+            }
+
+            if (count > 0)
+            {
+                // Calculate the average centroid
+                centroid /= count;
+                return centroid;
             }
             else
             {
-                throw new InvalidOperationException("Room location is not a point.");
+                // Handle cases where the room boundary is not valid
+                throw new InvalidOperationException("Unable to calculate room centroid.");
             }
+        }
+
+        private CurveLoop GetRoomBoundary(Room room)
+        {
+            // Get the room geometry
+            GeometryElement roomGeometry = room.get_Geometry(new Options());
+
+            // Find the boundary curve of the room
+            foreach (GeometryObject geomObj in roomGeometry)
+            {
+                Solid solid = geomObj as Solid;
+                if (solid != null && solid.Volume > 0)
+                {
+                    // Iterate over the faces of the solid
+                    foreach (Face face in solid.Faces)
+                    {
+                        // Check if the face is planar
+                        if (face is PlanarFace planarFace)
+                        {
+                            // Get the outer loop of the face
+                            IList<CurveLoop> loops = planarFace.GetEdgesAsCurveLoops();
+                            foreach (CurveLoop loop in loops)
+                            {
+                                return loop;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Return null if the room boundary curve is not found
+            return null;
         }
     }
 }
