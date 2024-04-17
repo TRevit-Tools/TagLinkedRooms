@@ -31,15 +31,46 @@ namespace TagLinkedRooms
             //Get the linkdocument from the revit link instance
             var firstArchDoc = firstArchLink.GetLinkDocument();
 
-            // Retrieve rooms from the linked arch document
-            FilteredElementCollector linkedArchRooms = new FilteredElementCollector(firstArchDoc)
+
+        
+            //Retrieve Levels from the Linked Arch Document
+            var  linkedArchlevels = new FilteredElementCollector(firstArchDoc)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .ToList();
+
+            //retrieve levels form the host model
+            var hostLevels = new  FilteredElementCollector(doc)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .ToList();
+
+            //Compare Link levels VS host levels and return linked levels that match host levels
+
+            var matchingLevels = linkedArchlevels
+                .Where(archLevel => hostLevels.Any(hostLevel => hostLevel.Name == archLevel.Name))
+                .ToList();
+
+            var filteredRooms = new FilteredElementCollector(firstArchDoc)
                 .OfCategory(BuiltInCategory.OST_Rooms)
-                .WhereElementIsNotElementType();
+                .WhereElementIsNotElementType()
+                .Where(room =>
+                {
+                    var roomLevel = room.get_Parameter(BuiltInParameter.LEVEL_NAME).AsElementId();
+                    return matchingLevels.Any(level => level.Id.Equals(roomLevel));
+                })
+                .ToList();
+           
+            // Retrieve rooms from the linked arch document
+            //FilteredElementCollector linkedArchRooms = new FilteredElementCollector(firstArchDoc)
+                //.OfCategory(BuiltInCategory.OST_Rooms)
+               //.WhereElementIsNotElementType()
+                //.WherePasses(combinedFilter);
 
             // Retrieve rooms from the document
-            FilteredElementCollector currentModelRooms = new FilteredElementCollector(doc, doc.ActiveView.Id)
-                .OfCategory(BuiltInCategory.OST_Rooms)
-                .WhereElementIsNotElementType();
+            //FilteredElementCollector currentModelRooms = new FilteredElementCollector(doc, doc.ActiveView.Id)
+               // .OfCategory(BuiltInCategory.OST_Rooms)
+               // .WhereElementIsNotElementType();
 
             //Retrieve all floor and ceiling plans
             List<ViewPlan> floorPlans = GetFloorPlans(doc);
@@ -52,10 +83,13 @@ namespace TagLinkedRooms
             Transaction transaction = new Transaction(doc, "Place Room Tags");
             transaction.Start();
 
+           
+
+
             // Iterate over the rooms
             foreach (ViewPlan plans in allPlans)
             {
-                foreach (Element e in currentModelRooms)
+                foreach (Element e in filteredRooms)
                 {
                     Room room = e as Room;
                     if (room != null)
@@ -76,7 +110,7 @@ namespace TagLinkedRooms
                 }
 
                 // Iterate over the linked rooms
-                foreach (Element e in linkedArchRooms)
+                foreach (Element e in filteredRooms)
                 {
                     Room room = e as Room;
                     if (room != null)
@@ -105,6 +139,8 @@ namespace TagLinkedRooms
             //TaskDialog.Show("Room Centroids", roomCenters);
             return Result.Succeeded;
         }
+
+
 
         private List<ViewPlan> GetFloorPlans(Document doc)
         {
