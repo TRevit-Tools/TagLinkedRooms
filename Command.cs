@@ -56,8 +56,9 @@ namespace TagLinkedRooms
                 .WhereElementIsNotElementType()
                 .Where(room =>
                 {
-                    var roomLevel = room.get_Parameter(BuiltInParameter.LEVEL_NAME).AsElementId();
-                    return matchingLevels.Any(level => level.Id.Equals(roomLevel));
+                    var roomLevel = room.get_Parameter(BuiltInParameter.LEVEL_NAME).AsString();
+                    
+                   return matchingLevels.Any(level => level.Name.Equals(roomLevel));
                 })
                 .ToList();
            
@@ -89,7 +90,7 @@ namespace TagLinkedRooms
             // Iterate over the rooms
             foreach (ViewPlan plans in allPlans)
             {
-                foreach (Element e in filteredRooms)
+               /* foreach (Element e in filteredRooms)
                 {
                     Room room = e as Room;
                     if (room != null)
@@ -107,16 +108,18 @@ namespace TagLinkedRooms
                             Debug.Print("An error occurred: " + ex.Message);
                         }
                     }
-                }
+                }*/
 
                 // Iterate over the linked rooms
                 foreach (Element e in filteredRooms)
                 {
-                    Room room = e as Room;
-                    if (room != null)
+                    try
                     {
-                        try
+                    Room room = e as Room;
+                        if (room != null)
                         {
+                            //try
+                            //{
                             LinkElementId linkedRoom = new LinkElementId(firstArchLink.Id, room.Id);
 
                             // Get the room location point
@@ -126,12 +129,18 @@ namespace TagLinkedRooms
                             // Place new room tag
                             doc.Create.NewRoomTag(linkedRoom, new UV(modifiedRoomLocation.X, modifiedRoomLocation.Y), plans.Id);
                             //roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.Print("An error occurred: " + ex.Message);
+                            // }
+                            /* catch (Exception ex)
+                             {
+                                 Debug.Print("An error occurred: " + ex.Message);
+                             }*/
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        Debug.Print("An error occurred: " + ex.Message);
+                    }
+                    
                 }
             }
             //commit transaction for placing room tags
