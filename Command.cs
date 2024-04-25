@@ -14,6 +14,7 @@ namespace TagLinkedRooms
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
+            
             UIApplication uiapp = commandData.Application;
             UIDocument uidoc = uiapp.ActiveUIDocument;
             Document doc = uidoc.Document;
@@ -32,15 +33,15 @@ namespace TagLinkedRooms
             var firstArchDoc = firstArchLink.GetLinkDocument();
 
 
-        
+
             //Retrieve Levels from the Linked Arch Document
-            var  linkedArchlevels = new FilteredElementCollector(firstArchDoc)
+            var linkedArchlevels = new FilteredElementCollector(firstArchDoc)
                 .OfClass(typeof(Level))
                 .Cast<Level>()
                 .ToList();
 
             //retrieve levels form the host model
-            var hostLevels = new  FilteredElementCollector(doc)
+            var hostLevels = new FilteredElementCollector(doc)
                 .OfClass(typeof(Level))
                 .Cast<Level>()
                 .ToList();
@@ -56,21 +57,13 @@ namespace TagLinkedRooms
                 .WhereElementIsNotElementType()
                 .Where(room =>
                 {
-                    var roomLevel = room.get_Parameter(BuiltInParameter.LEVEL_NAME).AsElementId();
-                    return matchingLevels.Any(level => level.Id.Equals(roomLevel));
+                    var roomLevel = room.get_Parameter(BuiltInParameter.LEVEL_NAME).AsString();
+
+                    return matchingLevels.Any(level => level.Name.Equals(roomLevel));
                 })
                 .ToList();
-           
-            // Retrieve rooms from the linked arch document
-            //FilteredElementCollector linkedArchRooms = new FilteredElementCollector(firstArchDoc)
-                //.OfCategory(BuiltInCategory.OST_Rooms)
-               //.WhereElementIsNotElementType()
-                //.WherePasses(combinedFilter);
 
-            // Retrieve rooms from the document
-            //FilteredElementCollector currentModelRooms = new FilteredElementCollector(doc, doc.ActiveView.Id)
-               // .OfCategory(BuiltInCategory.OST_Rooms)
-               // .WhereElementIsNotElementType();
+          
 
             //Retrieve all floor and ceiling plans
             List<ViewPlan> floorPlans = GetFloorPlans(doc);
@@ -83,62 +76,66 @@ namespace TagLinkedRooms
             Transaction transaction = new Transaction(doc, "Place Room Tags");
             transaction.Start();
 
-           
+            List<ElementId> taggedRoomIds = new List<ElementId>(); // Declaration of taggedRoomIds list
+
 
 
             // Iterate over the rooms
-            foreach (ViewPlan plans in allPlans)
+            try
             {
-                foreach (Element e in filteredRooms)
+                foreach (ViewPlan plans in allPlans)
                 {
-                    Room room = e as Room;
-                    if (room != null)
+                    foreach (Element element in filteredRooms)
                     {
-                        try
-                        {
-                            // Get the room location point (center of room)
-                            var roomLocation = (room.Location as LocationPoint).Point;
-                            //Places new room tag in center of room
-                            doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(roomLocation.X, roomLocation.Y), plans.Id);
-                            //roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.Print("An error occurred: " + ex.Message);
-                        }
-                    }
-                }
+                        Room room = element as Room; // Assign element to room if it's a Room
 
-                // Iterate over the linked rooms
-                foreach (Element e in filteredRooms)
-                {
-                    Room room = e as Room;
-                    if (room != null)
-                    {
-                        try
+                        if (room != null && room.LevelId != ElementId.InvalidElementId) //&& !taggedRoomIds.Contains(room.Id)) // Check if room is not null and not already tagged
                         {
-                            LinkElementId linkedRoom = new LinkElementId(firstArchLink.Id, room.Id);
-
-                            // Get the room location point
-                            var roomLocation = (room.Location as LocationPoint).Point;
-                            // Adjust the room location to the link revit instance origin if the model has moved in the current model
-                            var modifiedRoomLocation = firstArchLink.GetTransform().Origin + roomLocation;
-                            // Place new room tag
-                            doc.Create.NewRoomTag(linkedRoom, new UV(modifiedRoomLocation.X, modifiedRoomLocation.Y), plans.Id);
-                            //roomCenters = roomCenters + Environment.NewLine + "Room Location: " + roomLocation.ToString();
+                            if (room.Location is LocationPoint locationPoint)
+                            {
+                                LinkElementId linkedRoom = new LinkElementId(firstArchLink.Id, room.Id);
+                                var roomLocation = locationPoint.Point;
+                                var modifiedRoomLocation = firstArchLink.GetTransform().Origin + roomLocation;
+                                doc.Create.NewRoomTag(linkedRoom, new UV(modifiedRoomLocation.X, modifiedRoomLocation.Y), plans.Id);
+                                //taggedRoomIds.Add(room.Id);
+                            }
+                            else
+                            {
+                                Debug.Print($"Room location is not a LocationPoint. Location type: {room.Location?.GetType().ToString() ?? "null"}");
+                            }
                         }
-                        catch (Exception ex)
+                        else if (room == null)
                         {
-                            Debug.Print("An error occurred: " + ex.Message);
+                            Debug.Print("Element is not a Room.");
+                        }
+                        else
+                        {
+                            Debug.Print("Room is already tagged.");
                         }
                     }
                 }
             }
+            catch (InvalidOperationException invalidOpEx)
+            {
+                Debug.Print("An invalid operation occurred: " + invalidOpEx.Message);
+            }
+            catch (NullReferenceException nullRefEx)
+            {
+                Debug.Print("A null reference exception occurred: " + nullRefEx.Message);
+            }
+            catch (Exception ex)
+            {
+                Debug.Print("An error occurred: " + ex.Message);
+            }
+
+
             //commit transaction for placing room tags
             transaction.Commit();
             //TaskDialog.Show("Room Centroids", roomCenters);
             return Result.Succeeded;
         }
+
+
 
 
 
