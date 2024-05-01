@@ -14,7 +14,7 @@ namespace TagLinkedRooms
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            
+
             UIApplication uiapp = commandData.Application;
             UIDocument uidoc = uiapp.ActiveUIDocument;
             Document doc = uidoc.Document;
@@ -32,8 +32,6 @@ namespace TagLinkedRooms
             //Get the linkdocument from the revit link instance
             var firstArchDoc = firstArchLink.GetLinkDocument();
 
-
-
             //Retrieve Levels from the Linked Arch Document
             var linkedArchlevels = new FilteredElementCollector(firstArchDoc)
                 .OfClass(typeof(Level))
@@ -47,40 +45,51 @@ namespace TagLinkedRooms
                 .ToList();
 
             //Compare Link levels VS host levels and return linked levels that match host levels
-
             var matchingLevels = linkedArchlevels
                 .Where(archLevel => hostLevels.Any(hostLevel => hostLevel.Name == archLevel.Name))
                 .ToList();
 
-            var filteredRooms = new FilteredElementCollector(firstArchDoc)
+            // Filter rooms by matching levels
+            var filteredRoomsByLevel = new FilteredElementCollector(firstArchDoc)
                 .OfCategory(BuiltInCategory.OST_Rooms)
                 .WhereElementIsNotElementType()
                 .Where(room =>
                 {
                     var roomLevel = room.get_Parameter(BuiltInParameter.LEVEL_NAME).AsString();
-
                     return matchingLevels.Any(level => level.Name.Equals(roomLevel));
                 })
                 .ToList();
-
-          
 
             //Retrieve all floor and ceiling plans
             List<ViewPlan> floorPlans = GetFloorPlans(doc);
             List<ViewPlan> ceilingPlans = GetCeilingPlans(doc);
             var allPlans = floorPlans.Concat(ceilingPlans).ToList();
 
-            // Filter allPlans to include only floor and ceiling plans with matching level names
-            var filteredPlans = allPlans.Where(plan =>
+            // Get the phases associated with the plans
+            var planPhases = allPlans.Select(plan =>
             {
-                // Get the name of the level associated with the plan
-                var planLevelName = plan.get_Parameter(BuiltInParameter.PLAN_VIEW_LEVEL).AsString();
-
-                // Check if the plan level name is not null or empty and matches any level name in matchingLevels
-                return !string.IsNullOrEmpty(planLevelName) && matchingLevels.Any(level => level.Name == planLevelName);
-            }).ToList();
+                var phaseParameterValue = plan.LookupParameter("Phase Created");
+                return phaseParameterValue != null ? phaseParameterValue.AsString() : null;
+            }).Where(phaseName => !string.IsNullOrEmpty(phaseName)).ToList();
 
 
+            //phase id instead - phase ID integer
+
+            // Filter the rooms to only include rooms with the same phase as any of the plan phases
+            var filteredRooms = new FilteredElementCollector(firstArchDoc)
+                .OfCategory(BuiltInCategory.OST_Rooms)
+                .WhereElementIsNotElementType()
+                .Where(room =>
+                {
+                    var roomPhaseParam = room.get_Parameter(BuiltInParameter.ROOM_PHASE);
+                    if (roomPhaseParam != null)
+                    {
+                        var roomPhaseName = roomPhaseParam.AsString();
+                        return !string.IsNullOrEmpty(roomPhaseName);
+                    }
+                    return false;
+                })
+                .ToList();
 
             //message
             var roomCenters = string.Empty;
@@ -90,31 +99,45 @@ namespace TagLinkedRooms
 
             List<ElementId> taggedRoomIds = new List<ElementId>(); // Declaration of taggedRoomIds list
 
-
             // Iterate over the plans
             try
             {
-                foreach (ViewPlan plan in filteredPlans)
+                foreach (ViewPlan plan in allPlans)
                 {
                     // Get the name of the level associated with the plan
                     string planLevelName = plan.LookupParameter("Associated Level")?.AsString();
+                    string planPhaseName = plan.get_Parameter(BuiltInParameter.VIEW_PHASE)?.AsString();
+
+                    Debug.Print($"Plan: {plan.Name}, Plan Level: {planLevelName}, Plan Phase: {planPhaseName}");
 
                     // Filter the rooms to only include rooms on the current plan from the linked model
-                    var roomsOnPlan = new FilteredElementCollector(firstArchDoc)
-                        .OfCategory(BuiltInCategory.OST_Rooms)
-                        .WhereElementIsNotElementType()
+                    var roomsOnPlan = filteredRoomsByLevel
                         .Where(room =>
                         {
                             var roomLevelParam = room.get_Parameter(BuiltInParameter.LEVEL_NAME);
-                            if (roomLevelParam != null)
+                            var roomPhaseParam = room.get_Parameter(BuiltInParameter.ROOM_PHASE);
+
+                            // Check if both room level and phase parameters exist
+                            if (roomLevelParam != null && roomPhaseParam != null)
                             {
                                 var roomLevelName = roomLevelParam.AsString();
-                                if (roomLevelName != null)
+                                var roomPhaseName = roomPhaseParam.AsString();
+
+                                Debug.Print($"Room Level: {roomLevelName}, Room Phase: {roomPhaseName}");
+
+                                // Check if room level and phase names are not null or empty
+                                if (!string.IsNullOrEmpty(roomLevelName) && !string.IsNullOrEmpty(roomPhaseName))
                                 {
-                                    // Use the planLevelName variable from the outer scope
-                                    return planLevelName != null && roomLevelName == planLevelName;
+                                    // Check if both room phase and plan phase names match
+                                    if (planPhaseName != null && roomPhaseName == planPhaseName)
+                                    {
+                                        // Use the planLevelName variable from the outer scope
+                                        return roomLevelName == planLevelName;
+                                    }
                                 }
                             }
+
+                            // If any parameter is null or empty, or if phase names don't match, exclude the room
                             return false;
                         })
                         .ToList();
@@ -161,16 +184,11 @@ namespace TagLinkedRooms
                 Debug.Print("An error occurred: " + ex.Message);
             }
 
-
             //commit transaction for placing room tags
             transaction.Commit();
             //TaskDialog.Show("Room Centroids", roomCenters);
             return Result.Succeeded;
         }
-
-
-
-
 
         private List<ViewPlan> GetFloorPlans(Document doc)
         {
@@ -188,67 +206,6 @@ namespace TagLinkedRooms
                 .Cast<ViewPlan>()
                 .Where(v => v.ViewType == ViewType.CeilingPlan)
                 .ToList();
-        }
-        private XYZ GetRoomCentroid(Room room)
-        {
-            // Get the room boundary curve
-            CurveLoop roomBoundary = GetRoomBoundary(room);
-
-            // Calculate the centroid of the room boundary curve
-            XYZ centroid = XYZ.Zero;
-            int count = 0;
-
-            // Iterate over the segments of the boundary curve
-            foreach (var segment in roomBoundary)
-            {
-                // Accumulate the coordinates of the vertices
-                centroid += segment.GetEndPoint(0);
-                count++;
-            }
-
-            if (count > 0)
-            {
-                // Calculate the average centroid
-                centroid /= count;
-                return centroid;
-            }
-            else
-            {
-                // Handle cases where the room boundary is not valid
-                throw new InvalidOperationException("Unable to calculate room centroid.");
-            }
-        }
-
-        private CurveLoop GetRoomBoundary(Room room)
-        {
-            // Get the room geometry
-            GeometryElement roomGeometry = room.get_Geometry(new Options());
-
-            // Find the boundary curve of the room
-            foreach (GeometryObject geomObj in roomGeometry)
-            {
-                Solid solid = geomObj as Solid;
-                if (solid != null && solid.Volume > 0)
-                {
-                    // Iterate over the faces of the solid
-                    foreach (Face face in solid.Faces)
-                    {
-                        // Check if the face is planar
-                        if (face is PlanarFace planarFace)
-                        {
-                            // Get the outer loop of the face
-                            IList<CurveLoop> loops = planarFace.GetEdgesAsCurveLoops();
-                            foreach (CurveLoop loop in loops)
-                            {
-                                return loop;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Return null if the room boundary curve is not found
-            return null;
         }
     }
 }
