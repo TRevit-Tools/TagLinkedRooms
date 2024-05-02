@@ -65,32 +65,6 @@ namespace TagLinkedRooms
             List<ViewPlan> ceilingPlans = GetCeilingPlans(doc);
             var allPlans = floorPlans.Concat(ceilingPlans).ToList();
 
-            // Get the phases associated with the plans
-            var planPhases = allPlans.Select(plan =>
-            {
-                var phaseParameterValue = plan.LookupParameter("Phase Created");
-                return phaseParameterValue != null ? phaseParameterValue.AsString() : null;
-            }).Where(phaseName => !string.IsNullOrEmpty(phaseName)).ToList();
-
-
-            //phase id instead - phase ID integer
-
-            // Filter the rooms to only include rooms with the same phase as any of the plan phases
-            var filteredRooms = new FilteredElementCollector(firstArchDoc)
-                .OfCategory(BuiltInCategory.OST_Rooms)
-                .WhereElementIsNotElementType()
-                .Where(room =>
-                {
-                    var roomPhaseParam = room.get_Parameter(BuiltInParameter.ROOM_PHASE);
-                    if (roomPhaseParam != null)
-                    {
-                        var roomPhaseName = roomPhaseParam.AsString();
-                        return !string.IsNullOrEmpty(roomPhaseName);
-                    }
-                    return false;
-                })
-                .ToList();
-
             //message
             var roomCenters = string.Empty;
             //start transaction for placing room tags
@@ -99,75 +73,40 @@ namespace TagLinkedRooms
 
             List<ElementId> taggedRoomIds = new List<ElementId>(); // Declaration of taggedRoomIds list
 
-            // Iterate over the plans
+
+
+            // Iterate over the rooms
             try
             {
-                foreach (ViewPlan plan in allPlans)
+                foreach (ViewPlan plans in allPlans)
                 {
-                    // Get the name of the level associated with the plan
-                    string planLevelName = plan.LookupParameter("Associated Level")?.AsString();
-                    string planPhaseName = plan.get_Parameter(BuiltInParameter.VIEW_PHASE)?.AsString();
-
-                    Debug.Print($"Plan: {plan.Name}, Plan Level: {planLevelName}, Plan Phase: {planPhaseName}");
-
-                    // Filter the rooms to only include rooms on the current plan from the linked model
-                    var roomsOnPlan = filteredRoomsByLevel
-                        .Where(room =>
-                        {
-                            var roomLevelParam = room.get_Parameter(BuiltInParameter.LEVEL_NAME);
-                            var roomPhaseParam = room.get_Parameter(BuiltInParameter.ROOM_PHASE);
-
-                            // Check if both room level and phase parameters exist
-                            if (roomLevelParam != null && roomPhaseParam != null)
-                            {
-                                var roomLevelName = roomLevelParam.AsString();
-                                var roomPhaseName = roomPhaseParam.AsString();
-
-                                Debug.Print($"Room Level: {roomLevelName}, Room Phase: {roomPhaseName}");
-
-                                // Check if room level and phase names are not null or empty
-                                if (!string.IsNullOrEmpty(roomLevelName) && !string.IsNullOrEmpty(roomPhaseName))
-                                {
-                                    // Check if both room phase and plan phase names match
-                                    if (planPhaseName != null && roomPhaseName == planPhaseName)
-                                    {
-                                        // Use the planLevelName variable from the outer scope
-                                        return roomLevelName == planLevelName;
-                                    }
-                                }
-                            }
-
-                            // If any parameter is null or empty, or if phase names don't match, exclude the room
-                            return false;
-                        })
-                        .ToList();
-
-                    // Only proceed if there are rooms on the current plan
-                    if (roomsOnPlan.Any())
+                    foreach (Element element in filteredRooms)
                     {
-                        foreach (Element element in roomsOnPlan)
+                        Room room = element as Room; // Assign element to room if it's a Room
+
+                        if (room != null && room.LevelId != ElementId.InvalidElementId) //&& !taggedRoomIds.Contains(room.Id)) // Check if room is not null and not already tagged
                         {
-                            Room room = element as Room;
-                            if (room != null && room.Location is LocationPoint locationPoint)
+                            if (room.Location is LocationPoint locationPoint)
                             {
                                 LinkElementId linkedRoom = new LinkElementId(firstArchLink.Id, room.Id);
                                 var roomLocation = locationPoint.Point;
                                 var modifiedRoomLocation = firstArchLink.GetTransform().Origin + roomLocation;
-                                doc.Create.NewRoomTag(linkedRoom, new UV(modifiedRoomLocation.X, modifiedRoomLocation.Y), plan.Id);
-                            }
-                            else if (room == null)
-                            {
-                                Debug.Print("Element is not a Room.");
+                                doc.Create.NewRoomTag(linkedRoom, new UV(modifiedRoomLocation.X, modifiedRoomLocation.Y), plans.Id);
+                                //taggedRoomIds.Add(room.Id);
                             }
                             else
                             {
-                                Debug.Print($"Room {room.Id} on plan {plan.Name} is already tagged.");
+                                Debug.Print($"Room location is not a LocationPoint. Location type: {room.Location?.GetType().ToString() ?? "null"}");
                             }
                         }
-                    }
-                    else
-                    {
-                        Debug.Print($"No rooms found on plan {plan.Name}. Skipping tagging.");
+                        else if (room == null)
+                        {
+                            Debug.Print("Element is not a Room.");
+                        }
+                        else
+                        {
+                            Debug.Print("Room is already tagged.");
+                        }
                     }
                 }
             }
